@@ -419,6 +419,155 @@ print(f"Train Accuracy: {accuracy_score(y_train_res, y_pred_lgbm_train):.2%}")
 print(f"Test Accuracy:  {accuracy_score(y_test, y_pred_lgbm):.2%}")
 print(f"Difference:     {abs(accuracy_score(y_train_res, y_pred_lgbm_train) - accuracy_score(y_test, y_pred_lgbm)):.2%}")
 
+##### Voting Classifier - Hard and Soft
+from sklearn.ensemble import VotingClassifier
+
+# 1. Hard Voting
+hard_voting = VotingClassifier(
+    estimators=[
+        ("lr", lr),
+        ("dt", dt),
+        ("rf", rf),
+        ("xgb", xgb2),
+        ("lgbm", lgbm)
+    ],
+    voting="hard"
+)
+
+hard_voting.fit(X_train_scaled, y_train_res)
+y_pred_hv = hard_voting.predict(X_test_scaled)
+y_pred_hv_train = hard_voting.predict(X_train_scaled)
+
+print("\nHard Voting - Training Set Results")
+print("="*40)
+print(classification_report(y_train_res, y_pred_hv_train))
+print("Hard Voting - Test Set Results")
+print("="*40)
+print(classification_report(y_test, y_pred_hv))
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred_hv))
+print(f"Train Accuracy: {accuracy_score(y_train_res, y_pred_hv_train):.2%}")
+print(f"Test Accuracy:  {accuracy_score(y_test, y_pred_hv):.2%}")
+print(f"Difference:     {abs(accuracy_score(y_train_res, y_pred_hv_train) - accuracy_score(y_test, y_pred_hv)):.2%}")
+
+# 2. Soft Voting
+soft_voting = VotingClassifier(
+    estimators=[
+        ("lr", lr),
+        ("dt", dt),
+        ("rf", rf),
+        ("xgb", xgb2),
+        ("lgbm", lgbm)
+    ],
+    voting="soft"
+)
+
+soft_voting.fit(X_train_scaled, y_train_res)
+y_pred_sv = soft_voting.predict(X_test_scaled)
+y_pred_sv_train = soft_voting.predict(X_train_scaled)
+
+print("\nSoft Voting - Training Set Results")
+print("="*40)
+print(classification_report(y_train_res, y_pred_sv_train))
+print("Soft Voting - Test Set Results")
+print("="*40)
+print(classification_report(y_test, y_pred_sv))
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred_sv))
+print(f"Train Accuracy: {accuracy_score(y_train_res, y_pred_sv_train):.2%}")
+print(f"Test Accuracy:  {accuracy_score(y_test, y_pred_sv):.2%}")
+print(f"Difference:     {abs(accuracy_score(y_train_res, y_pred_sv_train) - accuracy_score(y_test, y_pred_sv)):.2%}")
+
+##### ROC Curves
+from sklearn.metrics import roc_curve, roc_auc_score
+import matplotlib.pyplot as plt
+
+# Get probabilities for each model
+models_proba = {
+    "Logistic Regression": (lr, X_test_scaled),
+    "Decision Tree":       (dt, X_test_scaled),
+    "Random Forest":       (rf, X_test_scaled),
+    "XGBoost":             (xgb2, X_test_scaled),
+    "LightGBM":            (lgbm, X_test_scaled),
+    "Soft Voting":         (soft_voting, X_test_scaled)
+}
+
+colors = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860"]
+
+plt.figure(figsize=(10, 7))
+
+for (name, (model, X)), color in zip(models_proba.items(), colors):
+    y_proba = model.predict_proba(X)[:, 1]
+    fpr, tpr, _ = roc_curve(y_test, y_proba)
+    auc = roc_auc_score(y_test, y_proba)
+    plt.plot(fpr, tpr, lw=2, color=color, label=f"{name} (AUC={auc:.3f})")
+
+# Random classifier baseline
+plt.plot([0, 1], [0, 1], "k--", lw=1.5, label="Random Classifier")
+
+plt.title("ROC Curves — All Models")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.legend(loc="lower right")
+plt.tight_layout()
+plt.show()
+
+##### Feature Importance — All Models
+fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+fig.suptitle("Feature Importance — All Models", fontsize=15, fontweight="bold")
+fig.delaxes(axes[1, 2])
+
+feature_names = X_train.columns
+
+models_fi = {
+    "Logistic Regression": abs(lr.coef_[0]),
+    "Decision Tree":       dt.feature_importances_,
+    "Random Forest":       rf.feature_importances_,
+    "XGBoost":             xgb2.feature_importances_,
+    "LightGBM (Gain)":     lgbm.booster_.feature_importance(importance_type="gain")
+}
+
+colors = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3"]
+
+for (name, importance), ax, color in zip(models_fi.items(), axes.flatten(), colors):
+    fi = pd.DataFrame({"feature": feature_names, "importance": importance}).nlargest(10, "importance")
+    sns.barplot(data=fi, y="feature", x="importance", ax=ax, color=color)
+    ax.set(title=name, xlabel="Importance", ylabel="")
+
+plt.tight_layout()
+plt.show()
+
+##### Final Model Comparison
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+models_eval = {
+    "Logistic Regression": (y_pred_lr, y_pred_lr_train),
+    "Decision Tree":       (y_pred_dt, y_pred_dt_train),
+    "Random Forest":       (y_pred_rf, y_pred_rf_train),
+    "XGBoost":             (y_pred_xgb2, y_pred_xgb2_train),
+    "LightGBM":            (y_pred_lgbm, y_pred_lgbm_train),
+    "Hard Voting":         (y_pred_hv, y_pred_hv_train),
+    "Soft Voting":         (y_pred_sv, y_pred_sv_train)
+}
+
+results = []
+for name, (y_pred, y_pred_train) in models_eval.items():
+    results.append({
+        "Model":      name,
+        "Train Acc":  f"{accuracy_score(y_train_res, y_pred_train):.2%}",
+        "Test Acc":   f"{accuracy_score(y_test, y_pred):.2%}",
+        "Difference": f"{abs(accuracy_score(y_train_res, y_pred_train) - accuracy_score(y_test, y_pred)):.2%}",
+        "Precision":  f"{precision_score(y_test, y_pred):.3f}",
+        "Recall":     f"{recall_score(y_test, y_pred):.3f}",
+        "F1 Score":   f"{f1_score(y_test, y_pred):.3f}"
+    })
+
+results_df = pd.DataFrame(results).set_index("Model")
+print(results_df.to_string())
+
+
+
+
 
 
 
